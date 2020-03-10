@@ -41,12 +41,14 @@ yellow() { _yellow "$@"; printf '\n'; }
 # Layout of the association file (TSV):
 # {status} {ticket} {branch}
 
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    alias sed=gsed
+fi
 
 if [[ "$1" == "setup" ]]; then
     set -e
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        red "Mac OS is currently unsupported. :("
-        exit 101
+        brew install gsed
     fi
     if [[ "$0" != "/usr/local/bin/"* ]]; then
         cur_path=$(readlink --canonicalize "$0")
@@ -80,11 +82,11 @@ if [[ "$1" == "setup" ]]; then
     if ! which jira > /dev/null; then
         cd /tmp
         if [[ "$OSTYPE" == "linux-gnu" ]]; then
-            curl -LO https://github.com/go-jira/jira/releases/download/v1.0.23/jira-linux-amd64
+            wget https://github.com/go-jira/jira/releases/download/v1.0.23/jira-linux-amd64
             sudo ln -sf /tmp/jira-linux-amd64 /usr/bin/jira
             sudo chmod +x /usr/bin/jira
         elif [[ "$OSTYPE" == "darwin"* ]]; then
-            curl -LO https://github.com/go-jira/jira/releases/download/v1.0.23/jira-darwin-amd64
+            wget https://github.com/go-jira/jira/releases/download/v1.0.23/jira-darwin-amd64
             sudo ln -sf /tmp/jira-darwin-amd64 $HOME/bin/jira
             sudo chmod +x $HOME/bin/jira
         fi
@@ -95,12 +97,12 @@ if [[ "$1" == "setup" ]]; then
     if ! which hub > /dev/null; then
         if [[ "$OSTYPE" == "linux-gnu" ]]; then
             cd /tmp
-            curl -L0 https://github.com/github/hub/releases/download/v2.14.1/hub-linux-amd64-2.14.1.tgz
+            wget https://github.com/github/hub/releases/download/v2.14.1/hub-linux-amd64-2.14.1.tgz
             tar -xzf hub-linux-amd64-2.14.1.tgz
             cd hub-linux-amd64-2.14.1
             sudo ./install
         elif [[ "$OSTYPE" == "darwin"* ]]; then
-            yellow "TODO"
+            brew install hub
         fi
     else
         echo "hub already installed"
@@ -357,6 +359,7 @@ github_resolve_merged() {
                 | .headRefName \
             ) | .[]" \
         ); do
+        echo "$branch"
         if transition_branch "REVIEW" "MERGED" "$branch"; then
             ticket=$(get_ticket_by_branch "$branch")
             status=$(get_minimum_status_by_ticket "$ticket")
@@ -608,11 +611,15 @@ case "$subcommand" in
     start)
         start_work $@
         ;;
+    config)
+        $EDITOR "$config" > /dev/tty \
+            || vim "$config" > /dev/tty
+        ;;
     pull-request)
         pull_request $@
         ;;
     create-ticket)
-        if create_ticket $@; then
+        if ticket=$(create_ticket $@); then
             green "${jira_link_base}${ticket}"
             exit 0
         fi
@@ -622,6 +629,7 @@ case "$subcommand" in
         github_resolve_merged &>> "$daemon_logs"
         ;;
     *)
-        echo "jira-tools [start|pull-request|create-ticket|daemon]"
+        echo "jira-tools [start | pull-request | create-ticket]"
+        echo "...        [config | daemon]"
         ;;
 esac
