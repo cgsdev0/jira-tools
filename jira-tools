@@ -359,7 +359,6 @@ github_resolve_merged() {
                 | .headRefName \
             ) | .[]" \
         ); do
-        echo "$branch"
         if transition_branch "REVIEW" "MERGED" "$branch"; then
             ticket=$(get_ticket_by_branch "$branch")
             status=$(get_minimum_status_by_ticket "$ticket")
