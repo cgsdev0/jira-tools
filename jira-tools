@@ -53,6 +53,14 @@ if [[ "$1" == "setup" ]]; then
         sudo ln -sf "$cur_path" /usr/local/bin/jira-tools
         green "Installed to /usr/local/bin/jira-tools"
     fi
+    # Install jq
+    if ! which jq > /dev/null; then
+        if [[ "$OSTYPE" == "linux-gnu" ]]; then
+            sudo apt-get install jq -y
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+            brew install jq
+        fi
+    fi
     # Install fzf
     if ! which fzf > /dev/null; then
         if [[ "$OSTYPE" == "linux-gnu" ]]; then
@@ -309,6 +317,7 @@ git_reset_to_latest_master() {
     git reset --hard origin/master &> /dev/null
     echo "Done."
 }
+
 github_api() {
 # Usage: [query]
     query="$(echo $@ | sed 's/\n//g')"
@@ -456,7 +465,7 @@ create_ticket() {
 }
 
 start_work() {
-    git diff-index --cached --quiet HEAD
+    git diff-index --quiet HEAD
     has_local_changes=$?
 
     if [ $has_local_changes -ne 0 ]; then
