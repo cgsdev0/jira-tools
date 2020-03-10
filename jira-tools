@@ -575,7 +575,7 @@ pull_request() {
                 _yellow "start a new branch based on this one? (y/n) "
 
                 read -n 1 c; echo ""
-                if [[ $c == [yY ]]; then
+                if [[ $c == [yY] ]]; then
                     git_new_branch
                     next_branch=$(git rev-parse --abbrev-ref HEAD)
                     track_new_branch "$next_branch" "$ticket"
