@@ -232,7 +232,7 @@ get_branches_by_ticket() {
 get_unmerged_branches_by_ticket() {
 # Usage: [ticket]
     local -; set -o pipefail
-    grep -P "^(NONE|REVIEW)\t" "$jira_branch_map" | cut -f3
+    grep -P "^(NONE|REVIEW)\t$1" "$jira_branch_map" | cut -f3
     return $?
 }
 
