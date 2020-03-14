@@ -533,7 +533,7 @@ start_work() {
 }
 
 find_samsara_reviewers() {
-    echo $extra_review_groups
+    echo "$extra_review_groups"
     rg -I "GithubUsername:\s+\".*\"" "go/src/samsaradev.io/team" \
             | sed 's/^[ \t]*GithubUsername:[ \t]*"\(.*\)".*$/\1/' \
             | sort
