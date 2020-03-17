@@ -617,6 +617,17 @@ case "$subcommand" in
     pull-request)
         pull_request $@
         ;;
+    current)
+        if ticket=$(get_ticket_by_branch $(git rev-parse --abbrev-ref HEAD)); then
+            if [ "$1" = "link" ]; then
+                echo "${jira_link_base}${ticket}"
+            else
+                echo "$ticket"
+            fi
+            exit 0
+        fi
+        exit 1
+        ;;
     create-ticket)
         if ticket=$(create_ticket $@); then
             green "${jira_link_base}${ticket}"
