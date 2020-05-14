@@ -448,7 +448,7 @@ create_ticket() {
 
         if fast_mode; then
             # Attempt to self-assign the ticket
-            if ! response=$(jira take "$ticket"); then
+            if ! response=$(jira take2 "$ticket"); then
                 red "$response"
                 return 1
             fi
