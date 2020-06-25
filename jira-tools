@@ -563,7 +563,7 @@ pull_request() {
             template=$(cat .github/PULL_REQUEST_TEMPLATE.md \
                 | sed -e "s@\(\*\*JIRA ticket\*\*: \)link@\1${jira_link_base}${ticket}@")
 
-            title=$(jira "$ticket" | grep "^summary:" | sed 's/^summary: //')
+            title="[$ticket] $(jira "$ticket" | grep "^summary:" | sed 's/^summary: //')"
             hub pull-request \
                 --message "$title" \
                 --message "$template" \
