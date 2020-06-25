@@ -452,11 +452,6 @@ create_ticket() {
                 red "$response"
                 return 1
             fi
-            rstatus=$(echo "$response" | cut -d ' ' -f1)
-            if [ "$rstatus" != "OK" ]; then
-                red "$rstatus"
-                return 1
-            fi
         fi
 
         # Success!
