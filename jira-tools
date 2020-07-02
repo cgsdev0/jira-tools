@@ -366,10 +366,18 @@ github_resolve_merged() {
                 ticket_status=$(jira view "$ticket" \
                     | grep "^status:" \
                     | sed 's/^status: //')
-                if [[ "$ticket_status" == "In Review" ]]; then
+                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" ]]; then
                     echo "Cleaning up $ticket..."
-                    delete_fully_merged_ticket "$ticket"
                     jira transition "Done" "$ticket" --noedit
+                    res1=$?
+                    # HACK: also transition it to 'Merged', just in case 'Done' fails
+                    jira transition "Merged" "$ticket" --noedit
+                    res2=$?
+                    if [[ $res1 == 0 || $res2 == 0 ]]; then
+                        delete_fully_merged_ticket "$ticket"
+                    else
+                        echo "ERROR: couldn't 'merge' or 'done' for '$ticket'"
+                    fi
                 fi
             fi
         fi
@@ -539,6 +547,12 @@ pull_request() {
 
     branch_name=$(git rev-parse --abbrev-ref HEAD)
 
+    merge_target="master"
+
+    if hotfix_version=$(grep -oE "u[0-9]+" <<< "$branch_name"); then
+        merge_target="driver2/$hotfix_version"
+    fi
+
     reviewers=$(find_samsara_reviewers \
         | fzf -m \
         | paste -s -d ',')
@@ -568,6 +582,7 @@ pull_request() {
                 --message "$title" \
                 --message "$template" \
                 --reviewer "$reviewers" \
+                --base "$merge_target" \
                 --edit
             if [[ $? -ne 0 ]]; then
                 exit 1
@@ -591,13 +606,17 @@ pull_request() {
         fi
     fi
 
+    # TODO: try to find the jira ticket from commit messages
     hub pull-request \
         --reviewer "$reviewers" \
+        --base "$merge_target" \
         --edit
 
     exit $?
 }
 
+github_resolve_merged
+exit 1
 # Runner Program
 subcommand=$1
 shift
