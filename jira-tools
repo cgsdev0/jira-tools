@@ -526,7 +526,10 @@ start_work() {
         git_reset_to_latest_master
         selected_branch="$(git rev-parse --abbrev-ref HEAD)"
         green "Transitioning '$ticket' into 'In Progress'..."
-        jira transition "In Progress" "$ticket" --noedit
+        rez=$(jira transition "In Progress" "$ticket" --noedit 2>&1)
+        if [[ $rez =~ "ERROR" ]]; then
+            jira transition "In Development" "$ticket" --noedit
+        fi
         track_new_branch "$selected_branch" "$ticket"
     else
         if ! git_try_checkout_branch "$selected_branch"; then
@@ -615,8 +618,6 @@ pull_request() {
     exit $?
 }
 
-github_resolve_merged
-exit 1
 # Runner Program
 subcommand=$1
 shift
