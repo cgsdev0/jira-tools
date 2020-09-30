@@ -93,6 +93,18 @@ if [[ "$1" == "setup" ]]; then
     else
         echo "go-jira already installed"
     fi
+
+    # Patch the jira templates
+    jira export-templates
+    CREATE_TEMPLATE=$HOME/.jira.d/templates/create
+    if [ ! grep -q storypoints $CREATE_TEMPLATE ]; then
+        echo '  customfield_10017: {{ or .overrides.storypoints "" }}' >> $CREATE_TEMPLATE
+    fi
+    if [ ! grep -q sprint $CREATE_TEMPLATE ]; then
+        echo '  customfield_10010: {{ or .overrides.sprint "" }}' >> $CREATE_TEMPLATE
+    fi
+    jira unexport-templates
+
     # Install hub
     if ! which hub > /dev/null; then
         if [[ "$OSTYPE" == "linux-gnu" ]]; then
