@@ -202,7 +202,7 @@ quickedit_markdown() (
 get_ticket_by_branch() {
 # Usage: [branch]
     local -; set -o pipefail
-    grep -P "\t$1$" "$jira_branch_map" | cut -f2
+    grep -P "\t$1$" "$jira_branch_map" | cut -f2 | head -n1
     return $?
 }
 
@@ -366,14 +366,17 @@ github_resolve_merged() {
                 ticket_status=$(jira view "$ticket" \
                     | grep "^status:" \
                     | sed 's/^status: //')
-                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" ]]; then
+                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" || "$ticket_status" == "Fix ready for testing" ]]; then
                     echo "Cleaning up $ticket..."
                     jira transition "Done" "$ticket" --noedit
                     res1=$?
                     # HACK: also transition it to 'Merged', just in case 'Done' fails
                     jira transition "Merged" "$ticket" --noedit
                     res2=$?
-                    if [[ $res1 == 0 || $res2 == 0 ]]; then
+                    # also let's get the golden workflows in here
+                    jira transition "Fix successfully validated" "$ticket" --noedit
+                    res3=$?
+                    if [[ $res1 == 0 || $res2 == 0 || $res3 == 0 ]]; then
                         delete_fully_merged_ticket "$ticket"
                     else
                         echo "ERROR: couldn't 'merge' or 'done' for '$ticket'"
@@ -528,7 +531,11 @@ start_work() {
         green "Transitioning '$ticket' into 'In Progress'..."
         rez=$(jira transition "In Progress" "$ticket" --noedit 2>&1)
         if [[ $rez =~ "ERROR" ]]; then
-            jira transition "In Development" "$ticket" --noedit
+            rez=$(jira transition "In Development" "$ticket" --noedit 2>&1)
+            if [[ $rez =~ "ERROR" ]]; then
+                jira transition "Investigating solutions for root cause" "$ticket" --noedit
+                jira transition "Developing Fix" "$ticket" --noedit
+            fi
         fi
         track_new_branch "$selected_branch" "$ticket"
     else
@@ -563,11 +570,11 @@ pull_request() {
     if status=$(get_branch_status "$branch_name"); then
         if [ "$status" = "REVIEW" ]; then
             yellow "This branch already has an open PR."
-            # _yellow "Would you like to view it in browser?"
-            # read -n 1 c; echo ""
-            # if [[ $c == [yY] ]]; then
-            #     gh pr view
-            # fi
+            _yellow "Would you like to view it in browser?"
+            read -n 1 c; echo ""
+            if [[ $c == [yY] ]]; then
+                gh pr view
+            fi
             exit 1
         fi
         if [ "$status" = "MERGED" ]; then
@@ -594,7 +601,10 @@ pull_request() {
             _green "Is this ticket ready for review? (y/n) "
             read -n 1 c; echo ""
             if [[ $c == [yY] ]]; then
-                jira transition "In Review" "$ticket" --noedit
+                rez=$(jira transition "In Review" "$ticket" --noedit 2>&1)
+                if [[ $rez =~ "ERROR" ]]; then
+                    jira transition "Fix ready for testing" "$ticket" --noedit 2>&1
+                fi
             else
                 _yellow "start a new branch based on this one? (y/n) "
 
