@@ -282,11 +282,13 @@ track_new_branch() {
 
 # Git helpers
 git_new_branch() {
+    ticket="$1"
     good_branch_name=1
     while [ $good_branch_name -ne 0 ]; do
         printf '\n'
-        _green "Enter a name for your branch: "
-        read branch_name
+        _green "Enter a name for your branch:"
+        echo
+        read -e -p "> " -i "$(git_default_branch_prefix)" branch_name
 
         case "$branch_name" in
              *\ * )
@@ -294,10 +296,14 @@ git_new_branch() {
                    continue
                   ;;
         esac
-        git checkout -b "$branch_name"
+        git checkout -b "${branch_name}-${ticket}"
         good_branch_name=$?
     done
     return $good_branch_name
+}
+
+git_default_branch_prefix() {
+    git config --global user.email | cut -d'.' -f1 | tr '\n' '/'
 }
 
 git_try_checkout_branch() {
@@ -378,7 +384,7 @@ github_resolve_merged() {
                 ticket_status=$(jira view "$ticket" \
                     | grep "^status:" \
                     | sed 's/^status: //')
-                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" || "$ticket_status" == "Fix ready for testing" ]]; then
+                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" || "$ticket_status" == "Fix ready for testing" || "$ticket_status" == "Pending Review" ]]; then
                     echo "Cleaning up $ticket..."
                     jira transition "Done" "$ticket" --noedit
                     res1=$?
@@ -537,7 +543,7 @@ start_work() {
     fi
 
     if [ "$selected_branch" = "$new_branch_text" ]; then
-        git_new_branch
+        git_new_branch "$ticket"
         git_reset_to_latest_master
         selected_branch="$(git rev-parse --abbrev-ref HEAD)"
         green "Transitioning '$ticket' into 'In Progress'..."
@@ -615,14 +621,17 @@ pull_request() {
             if [[ $c == [yY] ]]; then
                 rez=$(jira transition "In Review" "$ticket" --noedit 2>&1)
                 if [[ $rez =~ "ERROR" ]]; then
-                    jira transition "Fix ready for testing" "$ticket" --noedit 2>&1
+                    rez=$(jira transition "Fix ready for testing" "$ticket" --noedit 2>&1)
+                    if [[ $rez =~ "ERROR" ]]; then
+                        jira transition "Pending Review" "$ticket" --noedit 2>&1
+                    fi
                 fi
             else
                 _yellow "start a new branch based on this one? (y/n) "
 
                 read -n 1 c; echo ""
                 if [[ $c == [yY] ]]; then
-                    git_new_branch
+                    git_new_branch "$ticket"
                     next_branch=$(git rev-parse --abbrev-ref HEAD)
                     track_new_branch "$next_branch" "$ticket"
                 fi
