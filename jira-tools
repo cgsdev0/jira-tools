@@ -45,6 +45,14 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     alias sed=gsed
 fi
 
+git_default_branch_prefix() {
+    if [ "$branch_prefix" == "null" ]; then
+        git config --global user.email | cut -d'.' -f1 | tr '\n' '/'
+    else
+        echo -n "$branch_prefix/"
+    fi
+}
+
 if [[ "$1" == "setup" ]]; then
     set -e
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -97,10 +105,10 @@ if [[ "$1" == "setup" ]]; then
     # Patch the jira templates
     jira export-templates
     CREATE_TEMPLATE=$HOME/.jira.d/templates/create
-    if [ ! grep -q storypoints $CREATE_TEMPLATE ]; then
+    if ! grep -q storypoints $CREATE_TEMPLATE; then
         echo '  customfield_10017: {{ or .overrides.storypoints "" }}' >> $CREATE_TEMPLATE
     fi
-    if [ ! grep -q sprint $CREATE_TEMPLATE ]; then
+    if ! grep -q sprint $CREATE_TEMPLATE; then
         echo '  customfield_10010: {{ or .overrides.sprint "" }}' >> $CREATE_TEMPLATE
     fi
     jira unexport-templates
@@ -148,6 +156,16 @@ if [[ "$1" == "setup" ]]; then
             echo "$buf" | jq -r '.' > "$config"
         fi
     fi
+    export branch_prefix=$(jq -r ".github.branchPrefix" "$config")
+    if [[ "$branch_prefix" == "null" ]]; then
+        read -e -p "Enter your preferred github branch prefix: " -i $(git_default_branch_prefix) prefix
+        if [[ "$prefix" != "" ]]; then
+            prefix=$(echo "$prefix" | tr -d '/')
+            buf=$(cat "$config" \
+                | jq -r --arg prefix "$prefix" '.github.branchPrefix=$prefix')
+            echo "$buf" | jq -r '.' > "$config"
+        fi
+    fi
     green "Setup was successful!"
 
     if ! crontab -l | grep -q "jira-tools daemon"; then
@@ -175,15 +193,23 @@ get_abs_path() {
 read_config () {
     local -; set -e
 
-    export jira_link_base=$(jq -r ".jira.linkBase" "$config")
-    export github_repository_name=$(jq -r ".github.repoName" "$config")
     export new_ticket_text=$(jq -r ".language.newTicket" "$config")
     export new_branch_text=$(jq -r ".language.newBranch" "$config")
+
+    export github_repository_name=$(jq -r ".github.repoName" "$config")
     export extra_review_groups=$(jq -r ".github.reviewers | .[]" "$config")
+    export branch_prefix=$(jq -r ".github.branchPrefix" "$config")
+
+    export jira_link_base=$(jq -r ".jira.linkBase" "$config")
     export jira_projects=$(jq -r ".jira.projects | .[]" "$config")
     export jira_priorities=$(jq -r ".jira.priorities | .[]" "$config")
+    export jira_dev_states=$(jq -r ".jira.developmentStates | .[]" "$config")
+    export jira_review_states=$(jq -r ".jira.reviewStates | .[]" "$config")
+    export jira_done_states=$(jq -r ".jira.doneStates | .[]" "$config")
+
     export daemon_logs=$(get_abs_path $(jq -r ".files.daemonLogs" "$config"))
     export jira_branch_map=$(get_abs_path $(jq -r ".files.associations" "$config"))
+
     export JIRA_API_TOKEN=$(jq -r ".jira.apiToken" "$config")
     export GITHUB_API_TOKEN=$(jq -r ".github.apiToken" "$config")
 
@@ -201,6 +227,13 @@ if ! read_config; then
 fi
 
 # ========================================================
+
+contains_element () {
+    local e match="$1"
+    shift
+    for e; do [[ "$e" == "$match" ]] && return 0; done
+    return 1
+}
 
 quickedit_markdown() (
     trap 'rm ~/temp$$.md' exit;
@@ -282,6 +315,8 @@ track_new_branch() {
 
 # Git helpers
 git_new_branch() {
+    # Usage: [ticket]
+    # the ticket gets appended to the branch name
     ticket="$1"
     good_branch_name=1
     while [ $good_branch_name -ne 0 ]; do
@@ -300,10 +335,6 @@ git_new_branch() {
         good_branch_name=$?
     done
     return $good_branch_name
-}
-
-git_default_branch_prefix() {
-    git config --global user.email | cut -d'.' -f1 | tr '\n' '/'
 }
 
 git_try_checkout_branch() {
@@ -338,6 +369,22 @@ git_reset_to_latest_master() {
     echo "Done."
 }
 
+jira_try_transition() {
+# Usage: [ticket] [...states_to_try]
+    ticket="$1"
+    shift
+    while IFS= read -r potential_state; do
+        res=$(jira transition "$potential_state" "$ticket" --noedit 2>&1);
+        if [[ $res != *ERROR* ]]; then
+            return 0
+        fi
+    done <<< "$@"
+    red "ERROR: could not move ticket to any of the potential states!"
+    red "Commands that were tried (for troubleshooting purposes):"
+    echo "$@" | xargs -L1 -I {} echo jira transition \"{}\" \"$ticket\" --noedit
+    return 1
+}
+
 github_api() {
 # Usage: [query]
     query="$(echo $@ | sed 's/\n//g')"
@@ -349,7 +396,7 @@ github_api() {
     return $?
 }
 
-github_resolve_merged() {
+github_recently_merged() {
     recently_merged_query="
     query {
         viewer {
@@ -365,18 +412,20 @@ github_resolve_merged() {
         }
     }
     "
-    for branch in $( \
-        github_api "$recently_merged_query" \
-        | jq -r ".data.viewer.pullRequests.nodes \
-            | map( \
-                select( \
-                    .repository.nameWithOwner \
-                    == \"$github_repository_name\" \
-                    and .baseRefName == \"master\" \
-                ) \
-                | .headRefName \
-            ) | .[]" \
-        ); do
+    github_api "$recently_merged_query" \
+    | jq -r ".data.viewer.pullRequests.nodes \
+        | map( \
+            select( \
+                .repository.nameWithOwner \
+                == \"$github_repository_name\" \
+                and .baseRefName == \"master\" \
+            ) \
+            | .headRefName \
+        ) | .[]"
+}
+
+github_resolve_merged() {
+    for branch in $(github_recently_merged); do
         if transition_branch "REVIEW" "MERGED" "$branch"; then
             ticket=$(get_ticket_by_branch "$branch")
             status=$(get_minimum_status_by_ticket "$ticket")
@@ -384,21 +433,11 @@ github_resolve_merged() {
                 ticket_status=$(jira view "$ticket" \
                     | grep "^status:" \
                     | sed 's/^status: //')
-                if [[ "$ticket_status" == "In Review" || "$ticket_status" == "Review" || "$ticket_status" == "Fix ready for testing" || "$ticket_status" == "Pending Review" ]]; then
+                if contains_element "$ticket_status" "$jira_review_states"; then
+                    set -e
                     echo "Cleaning up $ticket..."
-                    jira transition "Done" "$ticket" --noedit
-                    res1=$?
-                    # HACK: also transition it to 'Merged', just in case 'Done' fails
-                    jira transition "Merged" "$ticket" --noedit
-                    res2=$?
-                    # also let's get the golden workflows in here
-                    jira transition "Fix successfully validated" "$ticket" --noedit
-                    res3=$?
-                    if [[ $res1 == 0 || $res2 == 0 || $res3 == 0 ]]; then
-                        delete_fully_merged_ticket "$ticket"
-                    else
-                        echo "ERROR: couldn't 'merge' or 'done' for '$ticket'"
-                    fi
+                    jira_try_transition "$ticket" "$jira_done_states"
+                    delete_fully_merged_ticket "$ticket"
                 fi
             fi
         fi
@@ -428,6 +467,7 @@ create_ticket() {
             --ansi \
             --reverse \
             --height="40%" \
+            --select-1 \
             --prompt="Select an issue type: ")
 
     if [ -z "$issuetype" ]; then
@@ -448,6 +488,7 @@ create_ticket() {
             --ansi \
             --reverse \
             --height="40%" \
+            --select-1 \
             --prompt="Select a priority level: ")
 
     if [ -z "$priority" ]; then
@@ -477,6 +518,7 @@ create_ticket() {
 
         if fast_mode; then
             # Attempt to self-assign the ticket
+            # TODO: figure this thing out
             if ! response=$(jira take2 "$ticket"); then
                 red "$response"
                 return 1
@@ -499,6 +541,7 @@ start_work() {
         exit 1
     fi
 
+    # TODO: don't rely on custom 'mysprint' command
     ticket_text=$( (jira mysprint; green "$new_ticket_text") \
         | sed '/^$/d' \
         | fzf \
@@ -547,14 +590,7 @@ start_work() {
         git_reset_to_latest_master
         selected_branch="$(git rev-parse --abbrev-ref HEAD)"
         green "Transitioning '$ticket' into 'In Progress'..."
-        rez=$(jira transition "In Progress" "$ticket" --noedit 2>&1)
-        if [[ $rez =~ "ERROR" ]]; then
-            rez=$(jira transition "In Development" "$ticket" --noedit 2>&1)
-            if [[ $rez =~ "ERROR" ]]; then
-                jira transition "Investigating solutions for root cause" "$ticket" --noedit
-                jira transition "Developing Fix" "$ticket" --noedit
-            fi
-        fi
+        jira_try_transition "$ticket" "$jira_dev_states"
         track_new_branch "$selected_branch" "$ticket"
     else
         if ! git_try_checkout_branch "$selected_branch"; then
@@ -619,13 +655,7 @@ pull_request() {
             _green "Is this ticket ready for review? (y/n) "
             read -n 1 c; echo ""
             if [[ $c == [yY] ]]; then
-                rez=$(jira transition "In Review" "$ticket" --noedit 2>&1)
-                if [[ $rez =~ "ERROR" ]]; then
-                    rez=$(jira transition "Fix ready for testing" "$ticket" --noedit 2>&1)
-                    if [[ $rez =~ "ERROR" ]]; then
-                        jira transition "Pending Review" "$ticket" --noedit 2>&1
-                    fi
-                fi
+                jira_try_transition "$ticket" "$jira_review_states"
             else
                 _yellow "start a new branch based on this one? (y/n) "
 
@@ -681,11 +711,24 @@ case "$subcommand" in
         fi
         exit 1
         ;;
+    state)
+        echo "STATUS  TICKET  BRANCH"
+        cat "$jira_branch_map"
+        ;;
+    logs)
+        less -R "$daemon_logs"
+        ;;
+    recently-merged)
+        github_recently_merged
+        ;;
     daemon)
-        github_resolve_merged &>> "$daemon_logs"
+        # prefix logs with timestamps
+        time=$(date -Iminutes)
+        github_resolve_merged | xargs -rL1 echo "$time" &>> "$daemon_logs"
         ;;
     *)
         echo "jira-tools [start | pull-request | create-ticket]"
-        echo "...        [config | daemon]"
+        echo "...        [config | daemon | state | logs | recently-merged]"
+        echo "...        [current [link]]"
         ;;
 esac
