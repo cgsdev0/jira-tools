@@ -53,6 +53,11 @@ git_default_branch_prefix() {
     fi
 }
 
+jira_email() {
+    # most likely correct for now
+    git config --global user.email
+}
+
 if [[ "$1" == "setup" ]]; then
     set -e
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -369,6 +374,37 @@ git_reset_to_latest_master() {
     echo "Done."
 }
 
+jira_account_id() {
+    curl --silent \
+        --request GET \
+        --url "${jira_link_base}/rest/api/3/myself" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        | jq -r '.accountId'
+}
+
+jira_self_assign() {
+# Usage: [ticket]
+    ticket="$1"
+    status=$(curl --silent \
+        -i \
+        --request PUT \
+        --url "${jira_link_base}/rest/api/3/issue/${ticket}/assignee" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        --data '{
+            "accountId": "'$(jira_account_id)'"
+        }' \
+            | head -n1 \
+            | cut -d' ' -f2)
+    if [[ "$status" == "204" ]]; then
+        return 0
+    else
+        red "Unable to self-assign ticket. JIRA API responded with status code '$status'"
+        return 1
+    fi
+}
+
 jira_try_transition() {
 # Usage: [ticket] [...states_to_try]
     ticket="$1"
@@ -519,8 +555,7 @@ create_ticket() {
 
         if fast_mode; then
             # Attempt to self-assign the ticket
-            # TODO: figure this thing out
-            if ! response=$(jira take2 "$ticket"); then
+            if ! response=$(jira_self_assign "$ticket"); then
                 red "$response"
                 return 1
             fi
@@ -639,7 +674,7 @@ pull_request() {
         if ticket=$(get_ticket_by_branch "$branch_name"); then
 
             template=$(cat .github/PULL_REQUEST_TEMPLATE.md \
-                | sed -e "s@\(\*\*JIRA ticket\*\*: \)link@\1${jira_link_base}${ticket}@")
+                | sed -e "s@\(\*\*JIRA ticket\*\*: \)link@\1${jira_link_base}/browse/${ticket}@")
 
             title="[$ticket] $(jira "$ticket" | grep "^summary:" | sed 's/^summary: //')"
             hub pull-request \
@@ -696,7 +731,7 @@ case "$subcommand" in
     current)
         if ticket=$(get_ticket_by_branch $(git rev-parse --abbrev-ref HEAD)); then
             if [ "$1" = "link" ]; then
-                echo "${jira_link_base}${ticket}"
+                echo "${jira_link_base}/browse/${ticket}"
             else
                 echo "$ticket"
             fi
@@ -706,7 +741,7 @@ case "$subcommand" in
         ;;
     create-ticket)
         if ticket=$(create_ticket $@); then
-            green "${jira_link_base}${ticket}"
+            green "${jira_link_base}/browse/${ticket}"
             exit 0
         fi
         exit 1
@@ -717,6 +752,9 @@ case "$subcommand" in
         ;;
     logs)
         less -R "$daemon_logs"
+        ;;
+    debug)
+        jira_self_assign NONE-155
         ;;
     recently-merged)
         github_recently_merged

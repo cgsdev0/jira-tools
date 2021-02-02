@@ -1,6 +1,6 @@
 {
   "jira": {
-    "linkBase": "https://{COMPANY}.atlassian.net/browse/",
+    "linkBase": "https://{COMPANY}.atlassian.net",
     "projects": ["TEST"],
     "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
     "apiToken": null,
