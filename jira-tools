@@ -376,6 +376,7 @@ jira_try_transition() {
     while IFS= read -r potential_state; do
         res=$(jira transition "$potential_state" "$ticket" --noedit 2>&1);
         if [[ $res != *ERROR* ]]; then
+            green "Successfully moved '$ticket' into '$potential_state'!"
             return 0
         fi
     done <<< "$@"
@@ -589,7 +590,6 @@ start_work() {
         git_new_branch "$ticket"
         git_reset_to_latest_master
         selected_branch="$(git rev-parse --abbrev-ref HEAD)"
-        green "Transitioning '$ticket' into 'In Progress'..."
         jira_try_transition "$ticket" "$jira_dev_states"
         track_new_branch "$selected_branch" "$ticket"
     else
