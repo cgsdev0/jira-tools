@@ -1,22 +1,25 @@
 {
-    "jira": {
-        "linkBase": "https://{COMPANY}.atlassian.net/browse/",
-        "projects": ["TEST"],
-        "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
-        "apiToken": null
-    },
-    "github": {
-        "repoName": "some-github/repo",
-        "reviewers": ["shaneschulte"],
-        "apiToken": null
-    },
-    "language": {
-        "newTicket": "-> Create new ticket...",
-        "newBranch": "-> Create new branch..."
-    },
-    "files": {
-        "associations": "~/.jira-branch-associations",
-        "daemonLogs": "~/.jira_daemon.log"
-    },
-    "configVersion": 1
+  "jira": {
+    "linkBase": "https://{COMPANY}.atlassian.net/browse/",
+    "projects": ["TEST"],
+    "priorities": ["Highest", "High", "Medium", "Low", "Lowest"],
+    "apiToken": null,
+    "developmentStates": ["In Development"],
+    "reviewStates": ["In Review"],
+    "doneStates": ["Done", "Merged"]
+  },
+  "github": {
+    "repoName": "some-github/repo",
+    "reviewers": ["shaneschulte"],
+    "apiToken": null
+  },
+  "language": {
+    "newTicket": "-> Create new ticket...",
+    "newBranch": "-> Create new branch..."
+  },
+  "files": {
+    "associations": "~/.jira-branch-associations",
+    "daemonLogs": "~/.jira_daemon.log"
+  },
+  "configVersion": 1
 }
