@@ -6,7 +6,8 @@
     "apiToken": null,
     "developmentStates": ["In Development"],
     "reviewStates": ["In Review"],
-    "doneStates": ["Done", "Merged"]
+    "doneStates": ["Done", "Merged"],
+    "query": "resolution = unresolved and status NOT IN ('In Review', 'Review', 'Merged', 'Archive') and assignee=currentuser()"
   },
   "github": {
     "repoName": "some-github/repo",

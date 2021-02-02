@@ -16,6 +16,7 @@
 # - jq
 # - go-jira (1.0.23 or newer)
 # - Bash (4.4 or newer)
+# - bat
 # - 256 color terminal support
 
 mkdir -p "$HOME/.config/jira-tools"
@@ -211,6 +212,7 @@ read_config () {
     export jira_dev_states=$(jq -r ".jira.developmentStates | .[]" "$config")
     export jira_review_states=$(jq -r ".jira.reviewStates | .[]" "$config")
     export jira_done_states=$(jq -r ".jira.doneStates | .[]" "$config")
+    export jira_query=$(jq -r ".jira.query" "$config")
 
     export daemon_logs=$(get_abs_path $(jq -r ".files.daemonLogs" "$config"))
     export jira_branch_map=$(get_abs_path $(jq -r ".files.associations" "$config"))
@@ -383,6 +385,23 @@ jira_account_id() {
         | jq -r '.accountId'
 }
 
+jira_jql_search() {
+# Usage: [query]
+    query="$1"
+    curl --silent \
+        --request POST \
+        --url "${jira_link_base}/rest/api/3/search" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        --header "Content-Type: application/json" \
+        --data '{ "jql": "'"$query"'" }'
+}
+
+jira_issue_list() {
+    jira_jql_search "$jira_query" \
+        | jq -r '.issues | .[] | "\(.key): \(.fields.summary)"'
+}
+
 jira_self_assign() {
 # Usage: [ticket]
     ticket="$1"
@@ -392,6 +411,7 @@ jira_self_assign() {
         --url "${jira_link_base}/rest/api/3/issue/${ticket}/assignee" \
         --user "$(jira_email):${JIRA_API_TOKEN}" \
         --header "Accept: application/json" \
+        --header "Content-Type: application/json" \
         --data '{
             "accountId": "'$(jira_account_id)'"
         }' \
@@ -405,20 +425,144 @@ jira_self_assign() {
     fi
 }
 
+jira_possible_transitions() {
+# Usage: [ticket]
+    ticket="$1"
+    curl --silent \
+        --request GET \
+        --url "${jira_link_base}/rest/api/3/issue/${ticket}/transitions" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        | jq -r '.transitions | .[] | "\(.id)\t\(.name)"'
+}
+
+jira_transition_ticket() {
+# Usage: [ticket] [transition id]
+    ticket="$1"
+    transition_id="$2"
+    status=$(curl --silent \
+        -i \
+        --request POST \
+        --url "${jira_link_base}/rest/api/3/issue/${ticket}/transitions" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        --header "Content-Type: application/json" \
+        --data '{
+            "transition": {
+                "id": '"$transition_id"'
+            }
+        }' \
+            | head -n1 \
+            | cut -d' ' -f2);
+
+    if [[ "$status" == "204" ]]; then
+        return 0
+    else
+        red "Unable to transition ticket. JIRA API responded with status code '$status'"
+        return 1
+    fi
+}
+
+jira_get_issue() {
+# Usage: [ticket]
+    ticket="$1"
+    if [[ "$ticket" != "->"* ]]; then
+        curl --silent \
+            --request GET \
+            --url "${jira_link_base}/rest/api/2/issue/${ticket}" \
+            --user "$(jira_email):${JIRA_API_TOKEN}" \
+            --header "Accept: application/json"
+    fi
+}
+
+unformat_links() {
+    while IFS= read line; do
+        echo "$line" \
+            | sed 's@\[[^|]*|\([^|]*\).*\]@\1@g'
+    done
+}
+
+jira_format_issue() {
+# Usage: [issue]
+    issue="$1"
+    if [ -z "$issue" ]; then
+        return 0
+    fi
+    (
+        echo -n "# ";
+        echo "$issue" | jq -r '.fields.summary'
+        echo
+        echo "$issue" | jq -r '.fields.description'
+        echo
+        echo -ne " * Reported by:\t"
+        echo "$issue" | jq -r '.fields.reporter.displayName'
+        echo -ne " * Created:    \t"
+        echo "$issue" | jq -r '.fields.created'
+        echo -ne " * Updated:    \t"
+        echo "$issue" | jq -r '.fields.updated'
+        echo
+        echo "## Comments"
+        echo
+        echo "$issue" \
+            | jq -r '.fields.comment.comments
+                    | .[] | "`\(.author.displayName)`: \(.body)\n\n"'
+    ) \
+        | unformat_links \
+        | bat \
+            -l markdown \
+            --style="grid" \
+            --color="always" \
+            --wrap="never"
+}
+
+jira_get_status() {
+# Usage: [issue]
+    issue="$1"
+    echo "$issue" | jq -r '.fields.status.name'
+}
+
+jira_project_id() {
+# Usage: [project]
+    project="$1"
+    curl --silent \
+        --request GET \
+        --url "${jira_link_base}/rest/agile/1.0/board?projectKeyOrId=${project}" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+            | jq -r '.values | .[] | select(.location.projectKey == "'$project'").id'
+}
+
+jira_current_sprint_id() {
+# Usage: [project]
+    project="$1"
+    board_id=$(jira_project_id "$project")
+    curl --silent \
+        --request GET \
+        --url "${jira_link_base}/rest/agile/1.0/board/${board_id}/sprint?state=active" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        | jq -r '.values[0].id'
+}
+
+
 jira_try_transition() {
 # Usage: [ticket] [...states_to_try]
+    set -o pipefail
     ticket="$1"
     shift
+    possible=$(jira_possible_transitions "$ticket")
     while IFS= read -r potential_state; do
-        res=$(jira transition "$potential_state" "$ticket" --noedit 2>&1);
-        if [[ $res != *ERROR* ]]; then
+        if selection=$(echo "$possible" | grep -m 1 "$potential_state"); then
+            transition_id=$(echo "$selection" | cut -f1)
+            if ! jira_transition_ticket "$ticket" "$transition_id"; then
+                continue
+            fi
             green "Successfully moved '$ticket' into '$potential_state'!"
             return 0
         fi
     done <<< "$@"
     red "ERROR: could not move ticket to any of the potential states!"
-    red "Commands that were tried (for troubleshooting purposes):"
-    echo "$@" | xargs -L1 -I {} echo jira transition \"{}\" \"$ticket\" --noedit
+    echo "$@"
     return 1
 }
 
@@ -467,9 +611,7 @@ github_resolve_merged() {
             ticket=$(get_ticket_by_branch "$branch")
             status=$(get_minimum_status_by_ticket "$ticket")
             if [[ "$status" == "MERGED" ]]; then
-                ticket_status=$(jira view "$ticket" \
-                    | grep "^status:" \
-                    | sed 's/^status: //')
+                ticket_status=$(jira_get_status "$(jira_get_issue "$ticket")")
                 if contains_element "$ticket_status" "$jira_review_states"; then
                     set -e
                     echo "Cleaning up $ticket..."
@@ -498,6 +640,7 @@ create_ticket() {
         exit 1
     fi
 
+    # TODO: remove go-jira dep
     issuetype=$(jira issuetypes -p "$project" \
         | cut -d ':' -f1 \
         | fzf \
@@ -533,10 +676,11 @@ create_ticket() {
     fi
 
     if fast_mode; then
-        sprint=$(jira current-sprint "$project")
+        sprint=$(jira_current_sprint_id "$project")
     fi
 
     set -e
+    # TODO: remove go-jira dep
     if response=$(jira create \
         --project="$project" \
         --override="summary: $title" \
@@ -577,16 +721,16 @@ start_work() {
         exit 1
     fi
 
-    # TODO: don't rely on custom 'mysprint' command
-    ticket_text=$( (jira mysprint; green "$new_ticket_text") \
+    ticket_text=$( (jira_issue_list; green "$new_ticket_text") \
         | sed '/^$/d' \
         | fzf \
         --ansi \
         --cycle \
         --reverse \
         --prompt="Search for a JIRA ticket: " \
-        --height="40%" \
-        --preview="echo {} | cut -d ':' -f1 | xargs jira")
+        --height="100%" \
+        --preview-window="up:70%:wrap" \
+        --preview="echo {} | cut -d ':' -f1 | xargs jira-tools view")
 
     if [ -z "$ticket_text" ]; then
         exit 0
@@ -753,8 +897,8 @@ case "$subcommand" in
     logs)
         less -R "$daemon_logs"
         ;;
-    debug)
-        jira_self_assign NONE-155
+    view)
+        jira_format_issue "$(jira_get_issue "$@")"
         ;;
     recently-merged)
         github_recently_merged
@@ -767,6 +911,6 @@ case "$subcommand" in
     *)
         echo "jira-tools [start | pull-request | create-ticket]"
         echo "...        [config | daemon | state | logs | recently-merged]"
-        echo "...        [current [link]]"
+        echo "...        [current [link] | view [ticket]]"
         ;;
 esac
