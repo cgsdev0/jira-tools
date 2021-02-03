@@ -238,7 +238,10 @@ fi
 contains_element () {
     local e match="$1"
     shift
-    for e; do [[ "$e" == "$match" ]] && return 0; done
+    while IFS= read e; do
+        echo "comparing '$e' to '$match'"
+        [[ "$e" == "$match" ]] && return 0
+    done <<< "$1"
     return 1
 }
 
@@ -895,7 +898,7 @@ case "$subcommand" in
         cat "$jira_branch_map"
         ;;
     logs)
-        less -R "$daemon_logs"
+        less +G -R "$daemon_logs"
         ;;
     view)
         jira_format_issue "$(jira_get_issue "$@")"
