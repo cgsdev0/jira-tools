@@ -111,9 +111,9 @@ if [[ "$1" == "setup" ]]; then
     # Patch the jira templates
     jira export-templates
     CREATE_TEMPLATE=$HOME/.jira.d/templates/create
-    if ! grep -q storypoints $CREATE_TEMPLATE; then
-        echo '  customfield_10017: {{ or .overrides.storypoints "" }}' >> $CREATE_TEMPLATE
-    fi
+    #if ! grep -q storypoints $CREATE_TEMPLATE; then
+        #echo '  customfield_10017: {{ or .overrides.storypoints "" }}' >> $CREATE_TEMPLATE
+    #fi
     if ! grep -q sprint $CREATE_TEMPLATE; then
         echo '  customfield_10010: {{ or .overrides.sprint "" }}' >> $CREATE_TEMPLATE
     fi
@@ -625,6 +625,59 @@ github_resolve_merged() {
     done
 }
 
+jira_get_issuetypes() {
+    # Usage: [project]
+    project="$1"
+    curl --silent \
+      --request GET \
+      --url "${jira_link_base}/rest/api/3/issuetype" \
+      --user "$(jira_email):${JIRA_API_TOKEN}" \
+      --header 'Accept: application/json'
+    # TODO: filter results i guess
+}
+
+jira_create_ticket() {
+    # Usage: [project] [title] [priority] [description]
+    project="$1"
+    title="$2"
+    priority="$3"
+    desc="$4"
+    curl --silent \
+        --request POST \
+        --url "${jira_link_base}/rest/api/3/issue" \
+        --user "$(jira_email):${JIRA_API_TOKEN}" \
+        --header "Accept: application/json" \
+        --header "Content-Type: application/json" \
+        --data '
+{
+     "fields": {
+        "summary": "'$title'",
+        "issuetype": {
+            "id": "10009"
+        },
+        "project": {
+            "key": "'$project'"
+        },
+        "description": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                "type": "paragraph",
+                "content": [
+                    {
+                    "text": "",
+                    "type": "text"
+                    }
+                ]
+                }
+            ]
+        }
+    }
+}
+'
+}
+
 create_ticket() {
 # Usage: [now]?
     assign_now="$1"
@@ -662,7 +715,7 @@ create_ticket() {
         exit 1
     fi
 
-    read -p "Estimated effort (days): " story_points
+    #read -p "Estimated effort (days): " story_points
 
     priority=$(echo "$jira_priorities" \
         | sed '/^$/d' \
@@ -688,7 +741,7 @@ create_ticket() {
         --override="summary: $title" \
         --override="description:$description" \
         --override="priority: $priority" \
-        --override="storypoints: $story_points" \
+        #--override="storypoints: $story_points" \
         --override="sprint: $sprint" \
         --issuetype="$issuetype" \
         --noedit); then
