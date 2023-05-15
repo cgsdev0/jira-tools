@@ -11,7 +11,7 @@
   },
   "github": {
     "repoName": "some-github/repo",
-    "reviewers": ["shaneschulte"],
+    "reviewers": ["cgsdev0"],
     "apiToken": null
   },
   "language": {
